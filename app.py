@@ -8,7 +8,7 @@ from datetime import timedelta, date
 import warnings
 warnings.filterwarnings('ignore')
 
-# 画面全体のレイアウト設定（スマホ対応を強化するためワイドモードを基本にしつつ、レスポンシブに）
+# 画面全体のレイアウト設定
 st.set_page_config(
     page_title="Market Profile Dashboard",
     page_icon="📊",
@@ -16,21 +16,30 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- データの取得部分（キャッシュ化して高速化） ---
-# 銘柄と期間が変わったときだけ yfinance から再ダウンロードする
+# --- データの取得部分（キャッシュ化＋フォールバック処理） ---
 @st.cache_data(show_spinner="株価データを取得中...")
 def load_data(ticker, start_date, end_date):
     t_obj = yf.Ticker(ticker)
-    info = t_obj.info
-    total_shares = info.get('sharesOutstanding', None)
+    total_shares = None
     
+    # .info の取得を try-except で囲み、エラーでも落ちないようにする
+    try:
+        info = t_obj.info
+        total_shares = info.get('sharesOutstanding', None)
+    except Exception:
+        total_shares = None
+
+    # .info で取れなかった場合、少し軽い fast_info も試してみる
     if not total_shares:
-        return None, None, "Error: 発行済株式数(sharesOutstanding)が取得できません。"
+        try:
+            total_shares = t_obj.fast_info.get('shares', None)
+        except Exception:
+            total_shares = None
         
     df = yf.download(ticker, start=start_date, end=end_date, progress=False)
     
     if df.empty or len(df) < 10:
-        return None, None, "Error: 十分なデータが取得できませんでした。"
+        return None, None, "Error: 十分な株価データが取得できませんでした。"
         
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
@@ -43,7 +52,15 @@ st.sidebar.header("📊 シミュレーション設定")
 
 ticker = st.sidebar.text_input("銘柄コード (東証は末尾に .T)", value="285A.T")
 
-# 日付選択（今日を動的に取得し、初期のデータ取得開始日を90日前に設定）
+# ★自動取得失敗時に使うための予備入力欄
+fallback_shares = st.sidebar.number_input(
+    "発行済株式数 (取得失敗時の予備)", 
+    value=10_000_000, 
+    step=1_000_000,
+    help="Yahoo Financeからの自動取得がブロックされた際、この数値を使って計算します。"
+)
+
+# 日付選択
 today = date.today()
 start_date = st.sidebar.date_input("データ取得開始日", value=today - timedelta(days=90))
 end_date = st.sidebar.date_input("データ取得終了日", value=today)
@@ -60,7 +77,12 @@ else:
     if "Error" in status:
         st.error(status)
     else:
-        # --- 蓄積シミュレーションロジック（ここをメインで高速ループ） ---
+        # ★取得できたかどうかのチェックとメッセージ表示
+        if not total_shares or total_shares <= 0:
+            st.warning(f"⚠️ 発行済株式数の自動取得に失敗しました。サイドバーで指定された予備の数値 ({fallback_shares:,} 株) を使用して計算しています。")
+            total_shares = fallback_shares
+
+        # --- 蓄積シミュレーションロジック ---
         recent_border_date = df.index[-1] - timedelta(days=recent_days)
 
         min_p = float(df['Low'].min())
@@ -143,7 +165,6 @@ else:
         st.title(f"📊 Advanced Market Profile")
         st.subheader(f"銘柄コード: {ticker}")
 
-        # スマホ対応：主要数値をカード形式で表示（スマホでは自動で縦積みになります）
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("現在値", f"{current_price:,.1f} 円")
         m2.metric(f"直近 {recent_days}日 損益比率", f"{recent_profit_ratio:.1f} %")
@@ -153,16 +174,14 @@ else:
 
         st.markdown("---")
 
-        # スマホ対応：PCなら横並び2列、スマホなら自動で縦並び1列に切り替える設定
         col1, col2 = st.columns([1, 1])
 
-        # 共通のスタイル調整（スマホの狭い画面でも文字が潰れないように少し大きめに調整）
         plt.rcParams.update({'font.size': 12, 'axes.labelsize': 12, 'xtick.labelsize': 10, 'ytick.labelsize': 10})
 
         # 左グラフ：全体分布
         with col1:
             st.markdown("### 🏛️ 全体コスト分布としこり玉")
-            fig1, ax1 = plt.subplots(figsize=(7, 5.5))  # スマホで見やすいアスペクト比
+            fig1, ax1 = plt.subplots(figsize=(7, 5.5))
             ax1.barh(labels, total_distribution, height=bin_width*0.8, color='gray', alpha=0.5, label='Total Cost')
             ax1.axhline(y=current_price, color='blue', linewidth=2, label=f'Current: {current_price:,.1f}')
             for p in peak_prices:

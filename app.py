@@ -43,13 +43,13 @@ st.sidebar.header("📊 シミュレーション設定")
 
 ticker = st.sidebar.text_input("銘柄コード (東証は末尾に .T)", value="285A.T")
 
-# 日付選択（デフォルトは過去約半年の範囲）
-today = date(2026, 7, 18)
-start_date = st.sidebar.date_input("データ取得開始日", value=date(2026, 1, 1))
+# 日付選択（今日を動的に取得し、初期のデータ取得開始日を90日前に設定）
+today = date.today()
+start_date = st.sidebar.date_input("データ取得開始日", value=today - timedelta(days=90))
 end_date = st.sidebar.date_input("データ取得終了日", value=today)
 
 margin_ratio = st.sidebar.number_input("信用倍率 (買い残 ÷ 売り残)", value=24.0, step=0.1, min_value=0.01)
-recent_days = st.sidebar.slider("比較期間（直近の日数）", min_value=1, max_value=200, value=120)
+recent_days = st.sidebar.slider("比較期間（直近の日数）", min_value=1, max_value=200, value=60)
 
 # データの読み込みとチェック
 if start_date >= end_date:
@@ -186,4 +186,3 @@ else:
             ax2.grid(True, linestyle='--', alpha=0.3)
             plt.tight_layout()
             st.pyplot(fig2)
-
